@@ -1,5 +1,27 @@
-.ipynb_checkpoints/
+# Entorno virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Tests / cache
 .pytest_cache/
-.venv
-**/__pycache__
-*.egg-info
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
