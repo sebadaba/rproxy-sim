@@ -1,0 +1,15 @@
+Comparacion de escenarios - Reverse Proxy DES
+============================================
+
+simulation_time = 1000
+replicas = 30
+usuarios_activos_fijos = 5000
+service_rate = 1.0
+proxy_capacity = 10
+
+                   scenario  arrival_rate  active_users  request_rate_per_user  burst_factor  proxy_capacity  blocking_probability_mean  blocking_probability_ci95_low  blocking_probability_ci95_high  utilization_mean  utilization_ci95_low  utilization_ci95_high  mean_rejected  mean_accepted  mean_arrivals
+     residencial_baja_carga         5.000          5000                 0.0010          1.00              10                   0.018392                       0.017186                        0.019598          0.489374              0.485961               0.492788      91.700000    4890.600000    4982.300000
+mixta_residencial_comercial         7.200          5000                 0.0012          1.20              10                   0.086800                       0.084560                        0.089039          0.656523              0.653476               0.659570     624.466667    6565.200000    7189.666667
+       campus_universitario         8.775          5000                 0.0013          1.35              10                   0.158388                       0.156285                        0.160490          0.739216              0.737104               0.741328    1390.566667    7387.133333    8777.700000
+   corredor_metro_comercial        11.250          5000                 0.0015          1.50              10                   0.269807                       0.266960                        0.272654          0.820154              0.818763               0.821545    3036.066667    8215.200000   11251.266667
+                evento_peak        15.300          5000                 0.0017          1.80              10                   0.420465                       0.418007                        0.422922          0.886881              0.885940               0.887821    6439.566667    8875.066667   15314.633333
