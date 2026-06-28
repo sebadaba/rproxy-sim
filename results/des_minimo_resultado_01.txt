@@ -1,0 +1,12 @@
+Resultados simulacion DES minima
+--------------------------------
+arrivals: 8051
+accepted: 7038
+rejected: 1013
+completed: 7028
+blocking_probability: 0.12582287914544776
+utilization: 0.7051474224298356
+max_busy: 10
+mean_service_time: 1.0030020155470836
+--------------------------------
+Erlang B teorico: 0.1216610642529515
