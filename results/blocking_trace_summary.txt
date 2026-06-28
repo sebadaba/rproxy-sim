@@ -1,0 +1,15 @@
+
+Evolucion de probabilidad de bloqueo
+====================================
+
+arrival_rate = 11.25
+service_rate = 1.0
+capacity = 10
+simulation_time = 1000
+seed = 2026
+
+bloqueo_final = 0.2697173620457604
+
+Archivos generados:
+C:\Users\edopa\OneDrive\Desktop\rproxy-sim\results\blocking_trace.csv
+C:\Users\edopa\OneDrive\Desktop\rproxy-sim\results\blocking_trace_plot.png

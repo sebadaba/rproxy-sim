@@ -1,0 +1,21 @@
+
+Validacion Erlang B - Simulador DES minimo
+==========================================
+
+Parametros:
+arrival_rate = 8.0
+service_rate = 1.0
+capacity = 10
+simulation_time = 1000
+replicas = 30
+
+Resultados:
+bloqueo_promedio_simulado = 0.12140635415015041
+desviacion_estandar = 0.006189497411669924
+intervalo_confianza_95 = [0.11919147094684933, 0.1236212373534515]
+erlang_b_teorico = 0.1216610642529515
+error_relativo = 0.0020936040989376187
+
+Archivos generados:
+C:\Users\edopa\OneDrive\Desktop\rproxy-sim\results\validation_erlang_b_replicas.csv
+C:\Users\edopa\OneDrive\Desktop\rproxy-sim\results\validation_erlang_b_plot.png
