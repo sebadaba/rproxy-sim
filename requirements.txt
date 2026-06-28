@@ -1,0 +1,7 @@
+numpy>=1.26
+pyyaml>=6.0
+matplotlib>=3.8
+
+# dev / test
+pytest>=7.4
+ruff>=0.1
