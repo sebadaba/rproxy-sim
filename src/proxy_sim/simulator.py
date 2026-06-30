@@ -136,6 +136,20 @@ class Simulator:
             "proxy_cpu_utilization": proxy_util,
         }
 
+    # ---------- helpers ----------
+
+    def _reject(self, req: Request) -> None:
+        """Marca el request como rechazado e incrementa el contador global."""
+        req.status = "rejected"
+        self._rejected += 1
+
+    def _select_backend(self, req: Request) -> Backend:
+        """Consulta el LB, marca el backend elegido en el request y lo devuelve."""
+        backend_idx = self._lb.select(self._backends, self._rng)
+        backend = self._backends[backend_idx]
+        req.backend_id = backend.id
+        return backend
+
     # ---------- arrival path ----------
 
     def _on_arrival(self) -> None:
@@ -143,24 +157,30 @@ class Simulator:
         self._next_request_id += 1
 
         if self._proxy is not None and self._proxy.cpu_cost_request > 0:
-            self._handle_at_proxy(req)
+            self._enqueue_request_at_proxy(req)
         else:
             # sin proxy o sin costo de request: dispatch directo al backend
             req.proxy_start_time = req.arrival_time
             req.dispatch_time = req.arrival_time
-            self._dispatch_to_backend(req)
+            self._dispatch_request_to_backend(req)
 
         dt = self._rng.exponential(1.0 / self._arrival_rate)
         self._loop.schedule(self._loop.now + dt, self._on_arrival, priority=1)
 
-    def _handle_at_proxy(self, req: Request) -> None:
+    def _enqueue_request_at_proxy(self, req: Request) -> None:
+        """Admite el request en el proxy.
+
+        Si el proxy está libre, inicia el CPU del request de inmediato.
+        Si está ocupado pero la cola tiene espacio, encola el request.
+        Si la cola está llena, lo rechaza.
+        """
         if not self._proxy.busy():
             self._start_proxy_request_service(req)
-        elif self._proxy.is_full():
-            req.status = "rejected"
-            self._rejected += 1
-        else:
+            return
+        if not self._proxy.is_full():
             self._proxy.queue.append(req)
+            return
+        self._reject(req)
 
     def _start_proxy_request_service(self, req: Request) -> None:
         assert self._proxy is not None
@@ -187,7 +207,7 @@ class Simulator:
         proxy.service_complete_event = None
 
         if phase == "request":
-            self._dispatch_to_backend(req)
+            self._dispatch_request_to_backend(req)
         else:
             self._finalize_request(req)
 
@@ -201,18 +221,21 @@ class Simulator:
 
     # ---------- backend path ----------
 
-    def _dispatch_to_backend(self, req: Request) -> None:
-        backend_idx = self._lb.select(self._backends, self._rng)
-        backend = self._backends[backend_idx]
-        req.backend_id = backend.id
+    def _dispatch_request_to_backend(self, req: Request) -> None:
+        """Envía el request al backend elegido por el LB.
 
+        Si el backend está libre, inicia el servicio de inmediato.
+        Si está ocupado pero la cola tiene espacio, encola.
+        Si la cola está llena, rechaza.
+        """
+        backend = self._select_backend(req)
         if not backend.busy():
             self._start_service(backend, req)
-        elif backend.is_full():
-            req.status = "rejected"
-            self._rejected += 1
-        else:
+            return
+        if not backend.is_full():
             backend.queue.append(req)
+            return
+        self._reject(req)
 
     def _start_service(self, backend: Backend, req: Request) -> None:
         backend.in_service = req
@@ -238,15 +261,24 @@ class Simulator:
 
         # ¿Falta CPU de response en el proxy?
         if self._proxy is not None and self._proxy.cpu_cost_response > 0:
-            if not self._proxy.busy():
-                self._start_proxy_response_service(req)
-            elif self._proxy.is_full():
-                req.status = "rejected"
-                self._rejected += 1
-            else:
-                self._proxy.queue.append(req)
+            self._start_proxy_response_after_backend(req)
         else:
             self._finalize_request(req)
+
+    def _start_proxy_response_after_backend(self, req: Request) -> None:
+        """Manda el request al proxy para hacer el CPU del response.
+
+        Si el proxy está libre, inicia el response-CPU de inmediato.
+        Si está ocupado pero la cola tiene espacio, encola.
+        Si la cola está llena, rechaza.
+        """
+        if not self._proxy.busy():
+            self._start_proxy_response_service(req)
+            return
+        if not self._proxy.is_full():
+            self._proxy.queue.append(req)
+            return
+        self._reject(req)
 
     # ---------- response path ----------
 
