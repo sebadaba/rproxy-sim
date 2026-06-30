@@ -175,21 +175,36 @@ class Simulator:
         Si la cola está llena, lo rechaza.
         """
         if not self._proxy.busy():
-            self._start_proxy_request_service(req)
+            self._start_proxy_cpu_service(req)
             return
         if not self._proxy.is_full():
             self._proxy.queue.append(req)
             return
         self._reject(req)
 
-    def _start_proxy_request_service(self, req: Request) -> None:
+    def _start_proxy_cpu_service(self, req: Request) -> None:
+        """Inicia el CPU del proxy sobre el request.
+
+        Si el request aún no hizo CPU request (proxy_start_time es None),
+        inicia la fase request. Si ya hizo request CPU, inicia la fase response.
+        El phase se deduce del estado del request para mantener una única
+        convención en todo el simulador.
+        """
         assert self._proxy is not None
         self._proxy.in_service = req
-        req.proxy_start_time = self._loop.now
-        duration = self._proxy.request_service_time()
+
+        if req.proxy_start_time is None:
+            req.proxy_start_time = self._loop.now
+            duration = self._proxy.request_service_time()
+            phase = "request"
+        else:
+            req.response_start_time = self._loop.now
+            duration = self._proxy.response_service_time()
+            phase = "response"
+
         self._proxy.service_complete_event = self._loop.schedule(
             self._loop.now + duration,
-            payload=partial(self._on_proxy_work_complete, self._proxy, "request"),
+            payload=partial(self._on_proxy_work_complete, self._proxy, phase),
             priority=0,
         )
 
@@ -213,11 +228,7 @@ class Simulator:
 
         # promueve siguiente de la cola mixta del proxy
         if proxy.queue:
-            next_req = proxy.queue.popleft()
-            if next_req.proxy_start_time is None:
-                self._start_proxy_request_service(next_req)
-            else:
-                self._start_proxy_response_service(next_req)
+            self._start_proxy_cpu_service(proxy.queue.popleft())
 
     # ---------- backend path ----------
 
@@ -273,7 +284,7 @@ class Simulator:
         Si la cola está llena, rechaza.
         """
         if not self._proxy.busy():
-            self._start_proxy_response_service(req)
+            self._start_proxy_cpu_service(req)
             return
         if not self._proxy.is_full():
             self._proxy.queue.append(req)
@@ -281,17 +292,6 @@ class Simulator:
         self._reject(req)
 
     # ---------- response path ----------
-
-    def _start_proxy_response_service(self, req: Request) -> None:
-        assert self._proxy is not None
-        self._proxy.in_service = req
-        req.response_start_time = self._loop.now
-        duration = self._proxy.response_service_time()
-        self._proxy.service_complete_event = self._loop.schedule(
-            self._loop.now + duration,
-            payload=partial(self._on_proxy_work_complete, self._proxy, "response"),
-            priority=0,
-        )
 
     def _finalize_request(self, req: Request) -> None:
         req.completion_time = self._loop.now
