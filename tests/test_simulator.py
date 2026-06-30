@@ -14,7 +14,7 @@ def test_smoke_el_simulador_corre_y_devuelve_resumen():
         duration=100.0,
         seed=42,
     )
-    summary = sim.run()
+    summary = sim.run().summary()
     assert summary["completed"] > 0
     assert summary["duration"] <= 100.0
     assert summary["rejected"] == 0  # sin tope de cola, no hay rechazos
@@ -32,7 +32,7 @@ def test_mean_latency_coincide_con_mm1():
         service_rate=service_rate,
         duration=duration,
         seed=42,
-    ).run()
+    ).run().summary()
     mean = summary["mean_latency"]
 
     # 5% tolerancia relativa; con n≈100k el error estadístico es ~0.3%
@@ -47,16 +47,16 @@ def test_reproducibilidad_con_mismo_seed():
         duration=500.0,
         seed=123,
     )
-    s1 = Simulator(**params).run()
-    s2 = Simulator(**params).run()
+    s1 = Simulator(**params).run().summary()
+    s2 = Simulator(**params).run().summary()
     assert s1["mean_latency"] == s2["mean_latency"]
     assert s1["completed"] == s2["completed"]
 
 
 def test_semillas_distintas_dan_latencias_distintas():
     base = dict(arrival_rate=10.0, service_rate=20.0, duration=500.0)
-    s1 = Simulator(seed=1, **base).run()
-    s2 = Simulator(seed=999, **base).run()
+    s1 = Simulator(seed=1, **base).run().summary()
+    s2 = Simulator(seed=999, **base).run().summary()
     assert s1["mean_latency"] != s2["mean_latency"]
 
 
@@ -68,7 +68,7 @@ def test_rechazo_cuando_cola_se_llena():
         duration=50.0,
         seed=42,
         max_queue_size=1,
-    ).run()
+    ).run().summary()
     assert summary["rejected"] > 0
     assert summary["completed"] > 0
 
@@ -103,7 +103,7 @@ def test_throughput_aproxima_arrival_rate_en_estado_estable():
         service_rate=20.0,
         duration=5000.0,
         seed=7,
-    ).run()
+    ).run().summary()
     assert abs(summary["throughput_rps"] - 10.0) / 10.0 < 0.05
 
 
@@ -118,7 +118,7 @@ def test_proxy_desactivado_por_default_no_agrega_etapas():
         service_rate=20.0,
         duration=500.0,
         seed=42,
-    ).run()
+    ).run().summary()
     assert summary["wait_proxy_mean"] == 0.0
     assert summary["service_proxy_request_mean"] == 0.0
     assert summary["service_proxy_response_mean"] == 0.0
@@ -138,7 +138,7 @@ def test_proxy_request_activo_agrega_etapa_request():
         seed=42,
         proxy_cpu_cost_request=cost,
         proxy_cpu_capacity=capacity,
-    ).run()
+    ).run().summary()
     assert summary["service_proxy_request_mean"] == pytest.approx(cost / capacity)
     # no hay cost_response, esa etapa queda en 0
     assert summary["service_proxy_response_mean"] == 0.0
@@ -155,7 +155,7 @@ def test_proxy_response_activo_agrega_etapa_response():
         seed=42,
         proxy_cpu_cost_response=cost,
         proxy_cpu_capacity=capacity,
-    ).run()
+    ).run().summary()
     assert summary["service_proxy_response_mean"] == pytest.approx(cost / capacity)
     assert summary["service_proxy_request_mean"] == 0.0
 
@@ -202,7 +202,7 @@ def test_proxy_utilizacion_refleja_ambas_direcciones():
         proxy_cpu_cost_request=cost_req,
         proxy_cpu_cost_response=cost_resp,
         proxy_cpu_capacity=capacity,
-    ).run()
+    ).run().summary()
 
     rel_err = abs(summary["proxy_cpu_utilization"] - expected) / expected
     assert rel_err < 0.10, (
@@ -221,7 +221,7 @@ def test_rechazo_por_cola_del_proxy_llena():
         proxy_cpu_cost_request=0.01,  # proxy lento
         proxy_cpu_capacity=1.0,
         proxy_max_queue_size=1,
-    ).run()
+    ).run().summary()
     assert summary["rejected"] > 0
 
 
@@ -235,7 +235,7 @@ def test_proxy_saturado_deja_backends_ociosos():
         proxy_cpu_cost_request=0.01,
         proxy_cpu_capacity=1.0,
     )
-    summary = sim.run()
+    summary = sim.run().summary()
     assert summary["proxy_cpu_utilization"] > 0.5
     # la latencia se va en cola del proxy, no del backend
     assert summary["wait_proxy_mean"] > summary["wait_backend_mean"]
@@ -275,8 +275,8 @@ def test_reproducibilidad_con_proxy_activo():
         proxy_cpu_cost_response=0.001,
         proxy_cpu_capacity=1.0,
     )
-    s1 = Simulator(**params).run()
-    s2 = Simulator(**params).run()
+    s1 = Simulator(**params).run().summary()
+    s2 = Simulator(**params).run().summary()
     assert s1["mean_latency"] == s2["mean_latency"]
     assert s1["proxy_cpu_utilization"] == s2["proxy_cpu_utilization"]
 
@@ -288,7 +288,7 @@ def test_proxy_timeout_none_no_afecta_comportamiento():
     """Default (None) → 0 timeouts, comportamiento idéntico al actual."""
     summary = Simulator(
         arrival_rate=10.0, service_rate=20.0, duration=500.0, seed=42,
-    ).run()
+    ).run().summary()
     assert summary["proxy_timed_out"] == 0
 
 
@@ -302,7 +302,7 @@ def test_proxy_timeout_dispara_en_proxy_saturado():
         proxy_cpu_cost_request=0.01,  # μ_proxy=100, λ=50 → util 0.5
         proxy_cpu_capacity=1.0,
         proxy_timeout=0.025,          # 25ms: ~2.5× service_time
-    ).run()
+    ).run().summary()
     # el timeout debe capturar una mezcla (no 0% ni 100%)
     assert summary["proxy_timed_out"] > 0
     total = summary["completed"] + summary["proxy_timed_out"]
@@ -319,7 +319,7 @@ def test_proxy_timeout_no_dispara_por_backend_lento():
         seed=42,
         # sin proxy CPU: el proxy es "instantáneo", proxy_time ≈ 0
         proxy_timeout=0.001,         # 1ms
-    ).run()
+    ).run().summary()
     assert summary["proxy_timed_out"] == 0
     assert summary["completed"] > 0
 
@@ -335,7 +335,7 @@ def test_proxy_timeout_excluye_de_latencia():
         proxy_cpu_capacity=1.0,
         proxy_timeout=0.005,
     )
-    summary = sim.run()
+    summary = sim.run().summary()
     assert len(sim._latencies) == summary["completed"]
     assert summary["proxy_timed_out"] > 0
 
@@ -353,7 +353,7 @@ def test_proxy_timeout_cuenta_en_throughput():
         proxy_cpu_capacity=1.0,
         proxy_timeout=0.002,         # genera timeouts
     )
-    summary = sim.run()
+    summary = sim.run().summary()
     total_processed = summary["completed"] + summary["proxy_timed_out"]
     throughput = total_processed / duration
     assert abs(throughput - arrival_rate) / arrival_rate < 0.10
@@ -427,7 +427,7 @@ def test_throughput_dentro_de_ic_99():
         duration=duration,
         seed=42,
     )
-    summary = sim.run()
+    summary = sim.run().summary()
     throughput = summary["throughput_rps"]
 
     se = np.sqrt(arrival_rate / duration)
@@ -517,7 +517,7 @@ def test_calibracion_ic_99_throughput():
             duration=duration,
             seed=seed,
         )
-        summary = sim.run()
+        summary = sim.run().summary()
         throughput = summary["throughput_rps"]
         se = np.sqrt(arrival_rate / duration)
         if throughput - z * se <= arrival_rate <= throughput + z * se:

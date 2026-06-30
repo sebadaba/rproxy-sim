@@ -89,11 +89,16 @@ class Simulator:
         self._timeout_times: list[float] = []
         self._rejection_times: list[float] = []
 
-    def run(self) -> dict:
-        """Corre la simulación hasta agotar el tiempo y devuelve el resumen."""
+    def run(self) -> "Simulator":
+        """Corre la simulación hasta agotar el tiempo y devuelve self.
+
+        Devuelve la instancia (no el summary) para que puedas acceder a
+        campos privados como `_completion_times`, `_latencies`, etc.,
+        necesarios para plotting. Para el summary agregado: `sim.summary()`.
+        """
         self._loop.schedule(0.0, self._on_arrival, priority=1)
         self._loop.run()
-        return self.summary()
+        return self
 
     def summary(self) -> dict:
         """Estadísticas agregadas de la corrida."""

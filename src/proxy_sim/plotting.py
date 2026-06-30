@@ -39,7 +39,7 @@ def plot_latency_over_time(
             s=2,
             alpha=0.5,
             color="steelblue",
-            label="completed",
+            label="completado",
         )
 
     if show_timeouts and sim._timeout_times:
@@ -50,11 +50,11 @@ def plot_latency_over_time(
     if show_rejections and sim._rejection_times:
         for t in sim._rejection_times:
             ax.axvline(t, color="red", alpha=0.3, linewidth=0.5)
-        ax.scatter([], [], color="red", alpha=0.6, label="rejected")
+        ax.scatter([], [], color="red", alpha=0.6, label="rechazado")
 
-    ax.set_xlabel("time (s)")
-    ax.set_ylabel("latency (s)")
-    ax.set_title("Latency over time")
+    ax.set_xlabel("tiempo (s)")
+    ax.set_ylabel("latencia (s)")
+    ax.set_title("Latencia en el tiempo")
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
     return ax
@@ -73,7 +73,7 @@ def plot_throughput_over_time(
     ax = _ensure_ax(ax)
 
     if not sim._completion_times:
-        ax.set_title("Throughput (no completions)")
+        ax.set_title("Throughput en el tiempo (sin completions)")
         return ax
 
     times = np.asarray(sim._completion_times)
@@ -85,9 +85,9 @@ def plot_throughput_over_time(
         throughputs[i] = count / window
 
     ax.plot(times, throughputs, color="steelblue", linewidth=1)
-    ax.set_xlabel("time (s)")
+    ax.set_xlabel("tiempo (s)")
     ax.set_ylabel(f"throughput (req/s, ventana={window}s)")
-    ax.set_title(f"Throughput over time (rolling {window}s window)")
+    ax.set_title(f"Throughput en el tiempo (ventana móvil {window}s)")
     ax.grid(True, alpha=0.3)
     return ax
 
@@ -99,14 +99,14 @@ def plot_stage_breakdown_over_time(
 ) -> plt.Axes:
     """Grafica el promedio de las 5 etapas de latencia en bins temporales.
 
-    Stacked area: muestra cómo se reparte la latencia media entre
-    wait_proxy, service_proxy_request, wait_backend, service_backend y
-    service_proxy_response a lo largo del tiempo.
+    Stacked area: muestra cómo se reparte la latencia media entre las
+    5 etapas (espera proxy, CPU request proxy, espera backend, CPU backend,
+    CPU response proxy) a lo largo del tiempo.
     """
     ax = _ensure_ax(ax)
 
     if not sim._completion_times:
-        ax.set_title("Stage breakdown (no completions)")
+        ax.set_title("Desglose de etapas en el tiempo (sin completions)")
         return ax
 
     times = np.asarray(sim._completion_times)
@@ -114,19 +114,20 @@ def plot_stage_breakdown_over_time(
     bins = np.arange(0, t_max + window, window)
     bin_indices = np.digitize(times, bins)
 
-    stages = {
-        "wait_proxy": sim._wait_proxy,
-        "service_proxy_request": sim._service_proxy_request,
-        "wait_backend": sim._wait_backend,
-        "service_backend": sim._service_backend,
-        "service_proxy_response": sim._service_proxy_response,
-    }
+    # (lista_privada, etiqueta_en_leyenda)
+    stages = [
+        (sim._wait_proxy, "espera proxy"),
+        (sim._service_proxy_request, "CPU request proxy"),
+        (sim._wait_backend, "espera backend"),
+        (sim._service_backend, "CPU backend"),
+        (sim._service_proxy_response, "CPU response proxy"),
+    ]
     colors = ["#a8e6cf", "#ffd3b6", "#ffaaa5", "#a3c4f3", "#bdb2ff"]
 
     bin_centers = (bins[:-1] + bins[1:]) / 2
     bottom = np.zeros(len(bin_centers))
 
-    for (name, values), color in zip(stages.items(), colors):
+    for (values, label), color in zip(stages, colors):
         vals = np.asarray(values)
         means = np.array(
             [
@@ -135,13 +136,13 @@ def plot_stage_breakdown_over_time(
             ]
         )
         ax.fill_between(
-            bin_centers, bottom, bottom + means, label=name, color=color, alpha=0.7
+            bin_centers, bottom, bottom + means, label=label, color=color, alpha=0.7
         )
         bottom += means
 
-    ax.set_xlabel("time (s)")
+    ax.set_xlabel("tiempo (s)")
     ax.set_ylabel(f"latencia media (s, ventana={window}s)")
-    ax.set_title(f"Stage breakdown over time (binned by {window}s)")
+    ax.set_title(f"Desglose de etapas en el tiempo (bins de {window}s)")
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
     return ax
@@ -158,7 +159,7 @@ def plot_latency_cdf(
     ax = _ensure_ax(ax)
 
     if not sim._latencies:
-        ax.set_title("Latency CDF (no completions)")
+        ax.set_title("CDF de latencia (sin completions)")
         return ax
 
     latencies = np.sort(sim._latencies)
@@ -170,8 +171,8 @@ def plot_latency_cdf(
         ax.axvline(v, color="gray", linestyle="--", alpha=0.5)
         ax.text(v, 0.05, f"p{p}={v * 1000:.1f}ms", rotation=90, fontsize=9, va="bottom")
 
-    ax.set_xlabel("latency (s)")
+    ax.set_xlabel("latencia (s)")
     ax.set_ylabel("F(x) = P(T ≤ x)")
-    ax.set_title("Latency CDF (completed only)")
+    ax.set_title("CDF de latencia (solo completados)")
     ax.grid(True, alpha=0.3)
     return ax
