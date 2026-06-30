@@ -5,19 +5,18 @@ import pytest
 from proxy_sim.components import Backend, Proxy, Request
 
 
-def test_request_recien_creado_solo_tiene_id_y_arrival():
-    """Los demás campos quedan en None/pending hasta que el request avanza."""
+def test_request_recien_creado_todos_los_timestamps_en_none():
+    """Todos los timestamps derivados inician en None; solo id y arrival_time tienen valor."""
     r = Request(id=1, arrival_time=2.5)
     assert r.id == 1
     assert r.arrival_time == 2.5
     assert r.backend_id is None
+    assert r.proxy_start_time is None
+    assert r.dispatch_time is None
     assert r.service_start_time is None
+    assert r.backend_done_time is None
+    assert r.response_start_time is None
     assert r.completion_time is None
-    assert r.status == "pending"
-
-
-def test_request_status_inicia_en_pending():
-    r = Request(id=0, arrival_time=0.0)
     assert r.status == "pending"
 
 
@@ -65,23 +64,18 @@ def test_backend_con_tope_se_llena_al_llegar_al_capacidad():
 # ---------- Proxy ----------
 
 
-def test_proxy_solo_request_cost():
-    p = Proxy(cpu_cost_request=0.001, cpu_cost_response=0.0, cpu_capacity=1.0)
-    assert p.cpu_cost_request == 0.001
-    assert p.cpu_cost_response == 0.0
-    assert p.cpu_capacity == 1.0
-
-
-def test_proxy_solo_response_cost():
-    p = Proxy(cpu_cost_request=0.0, cpu_cost_response=0.002, cpu_capacity=1.0)
-    assert p.request_service_time() == 0.0
-    assert p.response_service_time() == 0.002
-
-
-def test_proxy_ambos_costs():
-    p = Proxy(cpu_cost_request=0.001, cpu_cost_response=0.002, cpu_capacity=1.0)
-    assert p.request_service_time() == 0.001
-    assert p.response_service_time() == 0.002
+@pytest.mark.parametrize(
+    "cost_req,cost_resp,expected_req_time,expected_resp_time",
+    [
+        (0.001, 0.0, 0.001, 0.0),
+        (0.0, 0.002, 0.0, 0.002),
+        (0.001, 0.002, 0.001, 0.002),
+    ],
+)
+def test_proxy_service_times_segun_costs(cost_req, cost_resp, expected_req_time, expected_resp_time):
+    p = Proxy(cpu_cost_request=cost_req, cpu_cost_response=cost_resp, cpu_capacity=1.0)
+    assert p.request_service_time() == expected_req_time
+    assert p.response_service_time() == expected_resp_time
 
 
 def test_proxy_ambos_costs_en_cero_lanza_error():

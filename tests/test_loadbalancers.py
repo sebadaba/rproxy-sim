@@ -60,4 +60,12 @@ def test_random_distribuye_por_igual():
         counts[rand.select(bs, rng)] += 1
     expected = N / 4
     for c in counts:
-        assert abs(c - expected) / expected < 0.1
+        assert abs(c - expected) / expected < 0.05
+
+
+def test_random_con_un_backend_siempre_devuelve_cero():
+    rng = make_rng(1)
+    rand = Random()
+    bs = _backends(1)
+    for _ in range(10):
+        assert rand.select(bs, rng) == 0

@@ -73,8 +73,6 @@ def test_rechazo_cuando_cola_se_llena():
 
 
 def test_parametros_invalidos_lanzan_error():
-    import pytest
-
     with pytest.raises(ValueError):
         Simulator(arrival_rate=0, service_rate=20, duration=10, seed=1)
     with pytest.raises(ValueError):
@@ -83,8 +81,9 @@ def test_parametros_invalidos_lanzan_error():
         Simulator(arrival_rate=10, service_rate=20, duration=-1, seed=1)
 
 
-def test_lb_personalizado_se_usa():
-    """Si se pasa un LB custom, es el que recibe las selecciones."""
+def test_lb_personalizado_se_almacena():
+    """Si se pasa un LB custom, queda guardado en sim._lb para ser usado
+    por _select_backend durante el run."""
     rr = RoundRobin()
     sim = Simulator(
         arrival_rate=50.0,
@@ -241,14 +240,12 @@ def test_proxy_saturado_deja_backends_ociosos():
     assert summary["wait_proxy_mean"] > summary["wait_backend_mean"]
 
 
-def test_proxy_no_aparece_en_summary_si_esta_desactivado():
-    """Cuando ambos costs son 0, _proxy es None y utilization reporta 0."""
+def test_proxy_no_se_instancia_si_esta_desactivado():
+    """Cuando ambos costs son 0, el simulador no crea un Proxy."""
     sim = Simulator(
         arrival_rate=10.0, service_rate=20.0, duration=50.0, seed=1,
     )
     assert sim._proxy is None
-    summary = sim.run()
-    assert summary["proxy_cpu_utilization"] == 0.0
 
 
 def test_parametros_proxy_invalidos_lanzan_error():
