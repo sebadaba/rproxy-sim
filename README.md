@@ -20,7 +20,8 @@ rproxy-sim/
 │   ├── rng.py           generador de numpy sembrado
 │   ├── components.py    Request, Backend y Proxy
 │   ├── loadbalancers.py RoundRobin, Random
-│   └── simulator.py     orquestador M/M/k con proxy CPU opcional
+│   ├── simulator.py     orquestador M/M/k con proxy CPU opcional
+│   └── plotting.py      funciones de visualización con matplotlib
 └── tests/
     ├── test_engine.py
     ├── test_components.py
@@ -71,6 +72,32 @@ for lb in [RoundRobin(), Random()]:
     s = Simulator(load_balancer=lb, **params).run()
     print(lb, s["p95_latency"])
 ```
+
+## Gráficos
+
+El simulador trackea timestamps de cada evento (completions, timeouts, rechazos), lo que permite graficar la evolución temporal con `plotting.py`:
+
+```python
+from proxy_sim import Simulator, plot_latency_over_time, plot_latency_cdf
+
+s = Simulator(
+    arrival_rate=50, service_rate=200, duration=200, seed=42,
+    proxy_cpu_cost_request=0.01, proxy_cpu_capacity=1.0,
+    proxy_timeout=0.025,
+).run()
+
+# Latencia vs tiempo, con líneas verticales en timeouts y rechazos
+plot_latency_over_time(s)
+
+# CDF de latencias con percentiles marcados
+plot_latency_cdf(s)
+```
+
+Funciones disponibles:
+- `plot_latency_over_time` — latencia vs tiempo, marcando timeouts/rechazos
+- `plot_throughput_over_time` — throughput móvil
+- `plot_stage_breakdown_over_time` — stack de las 5 etapas
+- `plot_latency_cdf` — CDF con p50/p95/p99
 
 ## Tests
 
