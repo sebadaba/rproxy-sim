@@ -84,6 +84,10 @@ class Simulator:
         self._rejected = 0
         self._proxy_timeouts = 0
         self._proxy_timeout = proxy_timeout
+        # tracking de eventos con timestamp (para plotting)
+        self._completion_times: list[float] = []
+        self._timeout_times: list[float] = []
+        self._rejection_times: list[float] = []
 
     def run(self) -> dict:
         """Corre la simulación hasta agotar el tiempo y devuelve el resumen."""
@@ -149,6 +153,7 @@ class Simulator:
         """Marca el request como rechazado e incrementa el contador global."""
         req.status = "rejected"
         self._rejected += 1
+        self._rejection_times.append(self._loop.now)
 
     def _select_backend(self, req: Request) -> Backend:
         """Consulta el LB, marca el backend elegido en el request y lo devuelve."""
@@ -332,6 +337,7 @@ class Simulator:
         if self._proxy_timeout is not None and proxy_time > self._proxy_timeout:
             req.status = "timeout"
             self._proxy_timeouts += 1
+            self._timeout_times.append(self._loop.now)
             return
 
         req.status = "completed"
@@ -339,5 +345,6 @@ class Simulator:
         self._service_proxy_request.append(service_proxy_request)
         self._wait_backend.append(self._elapsed(dispatch, backend_start))
         self._service_backend.append(self._elapsed(backend_start, backend_done))
-        self._service_proxy_response.append(service_proxy_response)
+        self._service_proxy_response.append(self._elapsed(response_start, completion))
         self._latencies.append(completion - arrival)
+        self._completion_times.append(self._loop.now)

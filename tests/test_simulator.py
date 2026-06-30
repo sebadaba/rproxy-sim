@@ -528,3 +528,56 @@ def test_calibracion_ic_99_throughput():
         f"cobertura={coverage:.2%} ({hits}/{n_runs}) demasiado baja "
         f"(esperado ~99%)"
     )
+
+
+# ---------- tracking de eventos con timestamp ----------
+
+
+def test_completion_times_se_llenan_en_finalize():
+    """Los timestamps de finalización se registran paralelos a las latencias."""
+    sim = Simulator(
+        arrival_rate=10.0, service_rate=20.0, duration=50.0, seed=42,
+    )
+    sim.run()
+    n = len(sim._latencies)
+    assert len(sim._completion_times) == n
+    assert n > 0
+    # los timestamps son no-decrecientes (ordenados en el tiempo)
+    for i in range(1, n):
+        assert sim._completion_times[i] >= sim._completion_times[i - 1]
+
+
+def test_timeout_times_se_llenan_cuando_hay_timeout():
+    """Con proxy saturado y proxy_timeout estricto, _timeout_times no está vacío."""
+    sim = Simulator(
+        arrival_rate=50.0,
+        service_rate=200.0,
+        duration=200.0,
+        seed=42,
+        proxy_cpu_cost_request=0.01,
+        proxy_cpu_capacity=1.0,
+        proxy_timeout=0.025,
+    )
+    sim.run()
+    assert sim._proxy_timeouts > 0
+    assert len(sim._timeout_times) == sim._proxy_timeouts
+    # los timestamps de timeout son no-decrecientes
+    for i in range(1, len(sim._timeout_times)):
+        assert sim._timeout_times[i] >= sim._timeout_times[i - 1]
+
+
+def test_rejection_times_se_llenan_en_rechazo():
+    """Con max_queue_size pequeño y saturación, _rejection_times no está vacío."""
+    sim = Simulator(
+        arrival_rate=30.0,
+        service_rate=20.0,
+        duration=50.0,
+        seed=42,
+        max_queue_size=1,
+    )
+    sim.run()
+    assert sim._rejected > 0
+    assert len(sim._rejection_times) == sim._rejected
+    # los timestamps de rejection son no-decrecientes
+    for i in range(1, len(sim._rejection_times)):
+        assert sim._rejection_times[i] >= sim._rejection_times[i - 1]
