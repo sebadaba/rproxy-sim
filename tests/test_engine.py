@@ -1,5 +1,7 @@
 """Tests del motor DES."""
 
+import pytest
+
 from proxy_sim.engine import EventLoop
 
 
@@ -50,12 +52,8 @@ def test_end_time_evento_en_el_borde_si_corre():
 def test_agendar_en_el_pasado_lanza_error():
     loop = EventLoop(end_time=10.0)
     loop.now = 5.0
-    try:
+    with pytest.raises(ValueError):
         loop.schedule(3.0, lambda: None)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("se esperaba ValueError")
 
 
 def test_now_avanza_al_timestamp_del_evento():

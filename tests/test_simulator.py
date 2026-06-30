@@ -1,5 +1,7 @@
 """Tests del simulador."""
 
+import pytest
+
 from proxy_sim.loadbalancers import RoundRobin
 from proxy_sim.simulator import Simulator
 
@@ -71,8 +73,6 @@ def test_rechazo_cuando_cola_se_llena():
 
 
 def test_parametros_invalidos_lanzan_error():
-    import pytest
-
     with pytest.raises(ValueError):
         Simulator(arrival_rate=0, service_rate=20, duration=10, seed=1)
     with pytest.raises(ValueError):
@@ -81,8 +81,9 @@ def test_parametros_invalidos_lanzan_error():
         Simulator(arrival_rate=10, service_rate=20, duration=-1, seed=1)
 
 
-def test_lb_personalizado_se_usa():
-    """Si se pasa un LB custom, es el que recibe las selecciones."""
+def test_lb_personalizado_se_almacena():
+    """Si se pasa un LB custom, queda guardado en sim._lb para ser usado
+    por _select_backend durante el run."""
     rr = RoundRobin()
     sim = Simulator(
         arrival_rate=50.0,
@@ -103,3 +104,268 @@ def test_throughput_aproxima_arrival_rate_en_estado_estable():
         seed=7,
     ).run()
     assert abs(summary["throughput_rps"] - 10.0) / 10.0 < 0.05
+
+
+# ---------- proxy ----------
+
+
+def test_proxy_desactivado_por_default_no_agrega_etapas():
+    """Con defaults (sin proxy), todas las etapas de proxy son 0 y total =
+    wait_backend + service_backend (igual que antes)."""
+    summary = Simulator(
+        arrival_rate=10.0,
+        service_rate=20.0,
+        duration=500.0,
+        seed=42,
+    ).run()
+    assert summary["wait_proxy_mean"] == 0.0
+    assert summary["service_proxy_request_mean"] == 0.0
+    assert summary["service_proxy_response_mean"] == 0.0
+    assert summary["proxy_cpu_utilization"] == 0.0
+    # el backend sigue su curso normal
+    assert summary["mean_latency"] > 0.0
+
+
+def test_proxy_request_activo_agrega_etapa_request():
+    """cpu_cost_request constante → service_proxy_request_mean == cost/capacity."""
+    cost = 0.001
+    capacity = 1.0
+    summary = Simulator(
+        arrival_rate=10.0,
+        service_rate=20.0,
+        duration=500.0,
+        seed=42,
+        proxy_cpu_cost_request=cost,
+        proxy_cpu_capacity=capacity,
+    ).run()
+    assert summary["service_proxy_request_mean"] == pytest.approx(cost / capacity)
+    # no hay cost_response, esa etapa queda en 0
+    assert summary["service_proxy_response_mean"] == 0.0
+
+
+def test_proxy_response_activo_agrega_etapa_response():
+    """cpu_cost_response constante → service_proxy_response_mean == cost/capacity."""
+    cost = 0.001
+    capacity = 1.0
+    summary = Simulator(
+        arrival_rate=10.0,
+        service_rate=20.0,
+        duration=500.0,
+        seed=42,
+        proxy_cpu_cost_response=cost,
+        proxy_cpu_capacity=capacity,
+    ).run()
+    assert summary["service_proxy_response_mean"] == pytest.approx(cost / capacity)
+    assert summary["service_proxy_request_mean"] == 0.0
+
+
+def test_desglose_5_etapas_suma_latencia_total():
+    """Para cada request completado, las 5 componentes suman completion - arrival."""
+    sim = Simulator(
+        arrival_rate=20.0,
+        service_rate=50.0,
+        duration=500.0,
+        seed=42,
+        proxy_cpu_cost_request=0.0005,
+        proxy_cpu_cost_response=0.0005,
+        proxy_cpu_capacity=1.0,
+    )
+    sim.run()
+
+    n = len(sim._latencies)
+    assert n > 0
+    total_componentes = (
+        sum(sim._wait_proxy)
+        + sum(sim._service_proxy_request)
+        + sum(sim._wait_backend)
+        + sum(sim._service_backend)
+        + sum(sim._service_proxy_response)
+    )
+    total_latencias = sum(sim._latencies)
+    assert total_componentes == pytest.approx(total_latencias, rel=1e-9)
+
+
+def test_proxy_utilizacion_refleja_ambas_direcciones():
+    """En estado estable, busy_time/elapsed ≈ λ·(cost_req + cost_resp)/capacity."""
+    arrival_rate = 5.0
+    cost_req = 0.001
+    cost_resp = 0.002
+    capacity = 1.0
+    expected = arrival_rate * (cost_req + cost_resp) / capacity  # 0.015
+
+    summary = Simulator(
+        arrival_rate=arrival_rate,
+        service_rate=50.0,
+        duration=2000.0,
+        seed=42,
+        proxy_cpu_cost_request=cost_req,
+        proxy_cpu_cost_response=cost_resp,
+        proxy_cpu_capacity=capacity,
+    ).run()
+
+    rel_err = abs(summary["proxy_cpu_utilization"] - expected) / expected
+    assert rel_err < 0.10, (
+        f"utilization={summary['proxy_cpu_utilization']:.4f}, "
+        f"esperado≈{expected:.4f}, err={rel_err:.3%}"
+    )
+
+
+def test_rechazo_por_cola_del_proxy_llena():
+    """Con proxy_max_queue_size pequeño y proxy saturado, hay rechazos."""
+    summary = Simulator(
+        arrival_rate=50.0,
+        service_rate=100.0,
+        duration=20.0,
+        seed=42,
+        proxy_cpu_cost_request=0.01,  # proxy lento
+        proxy_cpu_capacity=1.0,
+        proxy_max_queue_size=1,
+    ).run()
+    assert summary["rejected"] > 0
+
+
+def test_proxy_saturado_deja_backends_ociosos():
+    """Si λ·cost > 0.5·capacity, el proxy es el bottleneck."""
+    sim = Simulator(
+        arrival_rate=80.0,        # 80·0.01/1 = 0.8 util teórica
+        service_rate=200.0,       # backend rápido, lejos de saturarse
+        duration=200.0,
+        seed=42,
+        proxy_cpu_cost_request=0.01,
+        proxy_cpu_capacity=1.0,
+    )
+    summary = sim.run()
+    assert summary["proxy_cpu_utilization"] > 0.5
+    # la latencia se va en cola del proxy, no del backend
+    assert summary["wait_proxy_mean"] > summary["wait_backend_mean"]
+
+
+def test_proxy_no_se_instancia_si_esta_desactivado():
+    """Cuando ambos costs son 0, el simulador no crea un Proxy."""
+    sim = Simulator(
+        arrival_rate=10.0, service_rate=20.0, duration=50.0, seed=1,
+    )
+    assert sim._proxy is None
+
+
+def test_parametros_proxy_invalidos_lanzan_error():
+    with pytest.raises(ValueError):
+        Simulator(
+            arrival_rate=10, service_rate=20, duration=10, seed=1,
+            proxy_cpu_cost_request=-0.001, proxy_cpu_capacity=1.0,
+        )
+    with pytest.raises(ValueError):
+        Simulator(
+            arrival_rate=10, service_rate=20, duration=10, seed=1,
+            proxy_cpu_cost_response=-0.001, proxy_cpu_capacity=1.0,
+        )
+    with pytest.raises(ValueError):
+        Simulator(
+            arrival_rate=10, service_rate=20, duration=10, seed=1,
+            proxy_cpu_cost_request=0.001, proxy_cpu_capacity=0.0,
+        )
+
+
+def test_reproducibilidad_con_proxy_activo():
+    """Misma semilla + mismos parámetros proxy → mismas métricas."""
+    params = dict(
+        arrival_rate=10.0, service_rate=20.0, duration=300.0, seed=99,
+        proxy_cpu_cost_request=0.001,
+        proxy_cpu_cost_response=0.001,
+        proxy_cpu_capacity=1.0,
+    )
+    s1 = Simulator(**params).run()
+    s2 = Simulator(**params).run()
+    assert s1["mean_latency"] == s2["mean_latency"]
+    assert s1["proxy_cpu_utilization"] == s2["proxy_cpu_utilization"]
+
+
+# ---------- proxy_timeout ----------
+
+
+def test_proxy_timeout_none_no_afecta_comportamiento():
+    """Default (None) → 0 timeouts, comportamiento idéntico al actual."""
+    summary = Simulator(
+        arrival_rate=10.0, service_rate=20.0, duration=500.0, seed=42,
+    ).run()
+    assert summary["proxy_timed_out"] == 0
+
+
+def test_proxy_timeout_dispara_en_proxy_saturado():
+    """Proxy saturado + timeout > service_time → tasa de timeout > 0 y < 100%."""
+    summary = Simulator(
+        arrival_rate=50.0,
+        service_rate=200.0,
+        duration=200.0,
+        seed=42,
+        proxy_cpu_cost_request=0.01,  # μ_proxy=100, λ=50 → util 0.5
+        proxy_cpu_capacity=1.0,
+        proxy_timeout=0.025,          # 25ms: ~2.5× service_time
+    ).run()
+    # el timeout debe capturar una mezcla (no 0% ni 100%)
+    assert summary["proxy_timed_out"] > 0
+    total = summary["completed"] + summary["proxy_timed_out"]
+    timeout_rate = summary["proxy_timed_out"] / total if total > 0 else 0
+    assert 0.05 < timeout_rate < 0.95, f"tasa de timeout={timeout_rate:.2%} fuera de rango"
+
+
+def test_proxy_timeout_no_dispara_por_backend_lento():
+    """Backend saturado pero proxy libre → 0 timeouts (aísla causas)."""
+    summary = Simulator(
+        arrival_rate=18.0,           # cerca de saturar backend (μ=20, ρ=0.9)
+        service_rate=20.0,
+        duration=200.0,
+        seed=42,
+        # sin proxy CPU: el proxy es "instantáneo", proxy_time ≈ 0
+        proxy_timeout=0.001,         # 1ms
+    ).run()
+    assert summary["proxy_timed_out"] == 0
+    assert summary["completed"] > 0
+
+
+def test_proxy_timeout_excluye_de_latencia():
+    """Las latencias registradas son solo de completados, no de timeouts."""
+    sim = Simulator(
+        arrival_rate=50.0,
+        service_rate=200.0,
+        duration=200.0,
+        seed=42,
+        proxy_cpu_cost_request=0.01,
+        proxy_cpu_capacity=1.0,
+        proxy_timeout=0.005,
+    )
+    summary = sim.run()
+    assert len(sim._latencies) == summary["completed"]
+    assert summary["proxy_timed_out"] > 0
+
+
+def test_proxy_timeout_cuenta_en_throughput():
+    """(completed + proxy_timed_out) / elapsed ≈ arrival_rate."""
+    arrival_rate = 30.0
+    duration = 1000.0
+    sim = Simulator(
+        arrival_rate=arrival_rate,
+        service_rate=200.0,
+        duration=duration,
+        seed=42,
+        proxy_cpu_cost_request=0.005,
+        proxy_cpu_capacity=1.0,
+        proxy_timeout=0.002,         # genera timeouts
+    )
+    summary = sim.run()
+    total_processed = summary["completed"] + summary["proxy_timed_out"]
+    throughput = total_processed / duration
+    assert abs(throughput - arrival_rate) / arrival_rate < 0.10
+
+
+def test_parametro_proxy_timeout_invalido():
+    with pytest.raises(ValueError):
+        Simulator(
+            arrival_rate=10, service_rate=20, duration=10, seed=1,
+            proxy_timeout=0,
+        )
+    with pytest.raises(ValueError):
+        Simulator(
+            arrival_rate=10, service_rate=20, duration=10, seed=1,
+            proxy_timeout=-1.0,
+        )

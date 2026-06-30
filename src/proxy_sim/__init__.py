@@ -1,6 +1,6 @@
 """Simulador DES de un reverse proxy con varios backends."""
 
-from proxy_sim.components import Backend, Request
+from proxy_sim.components import Backend, Proxy, Request
 from proxy_sim.engine import Event, EventLoop
 from proxy_sim.loadbalancers import LoadBalancer, Random, RoundRobin
 from proxy_sim.rng import make_rng
@@ -11,6 +11,7 @@ __all__ = [
     "Event",
     "EventLoop",
     "LoadBalancer",
+    "Proxy",
     "Random",
     "Request",
     "RoundRobin",
