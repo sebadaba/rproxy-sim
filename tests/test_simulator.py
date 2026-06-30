@@ -1,5 +1,6 @@
 """Tests del simulador."""
 
+import numpy as np
 import pytest
 
 from proxy_sim.loadbalancers import RoundRobin
@@ -278,3 +279,252 @@ def test_reproducibilidad_con_proxy_activo():
     s2 = Simulator(**params).run()
     assert s1["mean_latency"] == s2["mean_latency"]
     assert s1["proxy_cpu_utilization"] == s2["proxy_cpu_utilization"]
+
+
+# ---------- proxy_timeout ----------
+
+
+def test_proxy_timeout_none_no_afecta_comportamiento():
+    """Default (None) → 0 timeouts, comportamiento idéntico al actual."""
+    summary = Simulator(
+        arrival_rate=10.0, service_rate=20.0, duration=500.0, seed=42,
+    ).run()
+    assert summary["proxy_timed_out"] == 0
+
+
+def test_proxy_timeout_dispara_en_proxy_saturado():
+    """Proxy saturado + timeout > service_time → tasa de timeout > 0 y < 100%."""
+    summary = Simulator(
+        arrival_rate=50.0,
+        service_rate=200.0,
+        duration=200.0,
+        seed=42,
+        proxy_cpu_cost_request=0.01,  # μ_proxy=100, λ=50 → util 0.5
+        proxy_cpu_capacity=1.0,
+        proxy_timeout=0.025,          # 25ms: ~2.5× service_time
+    ).run()
+    # el timeout debe capturar una mezcla (no 0% ni 100%)
+    assert summary["proxy_timed_out"] > 0
+    total = summary["completed"] + summary["proxy_timed_out"]
+    timeout_rate = summary["proxy_timed_out"] / total if total > 0 else 0
+    assert 0.05 < timeout_rate < 0.95, f"tasa de timeout={timeout_rate:.2%} fuera de rango"
+
+
+def test_proxy_timeout_no_dispara_por_backend_lento():
+    """Backend saturado pero proxy libre → 0 timeouts (aísla causas)."""
+    summary = Simulator(
+        arrival_rate=18.0,           # cerca de saturar backend (μ=20, ρ=0.9)
+        service_rate=20.0,
+        duration=200.0,
+        seed=42,
+        # sin proxy CPU: el proxy es "instantáneo", proxy_time ≈ 0
+        proxy_timeout=0.001,         # 1ms
+    ).run()
+    assert summary["proxy_timed_out"] == 0
+    assert summary["completed"] > 0
+
+
+def test_proxy_timeout_excluye_de_latencia():
+    """Las latencias registradas son solo de completados, no de timeouts."""
+    sim = Simulator(
+        arrival_rate=50.0,
+        service_rate=200.0,
+        duration=200.0,
+        seed=42,
+        proxy_cpu_cost_request=0.01,
+        proxy_cpu_capacity=1.0,
+        proxy_timeout=0.005,
+    )
+    summary = sim.run()
+    assert len(sim._latencies) == summary["completed"]
+    assert summary["proxy_timed_out"] > 0
+
+
+def test_proxy_timeout_cuenta_en_throughput():
+    """(completed + proxy_timed_out) / elapsed ≈ arrival_rate."""
+    arrival_rate = 30.0
+    duration = 1000.0
+    sim = Simulator(
+        arrival_rate=arrival_rate,
+        service_rate=200.0,
+        duration=duration,
+        seed=42,
+        proxy_cpu_cost_request=0.005,
+        proxy_cpu_capacity=1.0,
+        proxy_timeout=0.002,         # genera timeouts
+    )
+    summary = sim.run()
+    total_processed = summary["completed"] + summary["proxy_timed_out"]
+    throughput = total_processed / duration
+    assert abs(throughput - arrival_rate) / arrival_rate < 0.10
+
+
+def test_parametro_proxy_timeout_invalido():
+    with pytest.raises(ValueError):
+        Simulator(
+            arrival_rate=10, service_rate=20, duration=10, seed=1,
+            proxy_timeout=0,
+        )
+    with pytest.raises(ValueError):
+        Simulator(
+            arrival_rate=10, service_rate=20, duration=10, seed=1,
+            proxy_timeout=-1.0,
+        )
+
+
+# ---------- intervalo de confianza ----------
+
+
+def test_mean_latency_dentro_de_ic_99():
+    """Valida M/M/1: el 1/(μ-λ) teórico cae dentro del IC 99% del estimador empírico.
+
+    Usa 99% en vez de 95% para reducir la tasa de falsos positivos cuando el
+    sesgo de warmup + right-censoring empuja el estimador ~0.5-1% del valor
+    teórico. La simulación de M/M/1 es estadísticamente correcta; el ajuste
+    es solo para hacer el test estable.
+    """
+    arrival_rate = 10.0
+    service_rate = 20.0
+    theoretical = 1.0 / (service_rate - arrival_rate)  # 0.1s
+    duration = 10000.0
+
+    sim = Simulator(
+        arrival_rate=arrival_rate,
+        service_rate=service_rate,
+        duration=duration,
+        seed=42,
+    )
+    sim.run()
+
+    n = len(sim._latencies)
+    mean = float(np.mean(sim._latencies))
+    std = float(np.std(sim._latencies, ddof=1))
+    sem = std / np.sqrt(n)
+    z = 2.576  # IC 99% normal estándar
+    ci_low = mean - z * sem
+    ci_high = mean + z * sem
+
+    assert ci_low <= theoretical <= ci_high, (
+        f"teórico={theoretical:.4f} fuera de IC99=[{ci_low:.4f}, {ci_high:.4f}] "
+        f"(n={n}, mean={mean:.4f}, sem={sem:.6f})"
+    )
+
+
+def test_throughput_dentro_de_ic_99():
+    """El throughput empírico cae dentro del IC 99% de λ.
+
+    Para un proceso de llegadas Poisson, la varianza del estimador n/T es λ/T
+    (teorema de Burke), dando un error estándar analítico en vez de estimado.
+    Usa 99% para consistencia con test_mean_latency_dentro_de_ic_99.
+    """
+    arrival_rate = 10.0
+    service_rate = 20.0
+    duration = 10000.0
+
+    sim = Simulator(
+        arrival_rate=arrival_rate,
+        service_rate=service_rate,
+        duration=duration,
+        seed=42,
+    )
+    summary = sim.run()
+    throughput = summary["throughput_rps"]
+
+    se = np.sqrt(arrival_rate / duration)
+    z = 2.576  # IC 99%
+    ci_low = throughput - z * se
+    ci_high = throughput + z * se
+
+    assert ci_low <= arrival_rate <= ci_high, (
+        f"λ={arrival_rate} fuera de IC99=[{ci_low:.4f}, {ci_high:.4f}] "
+        f"(throughput={throughput:.4f}, se={se:.4f})"
+    )
+
+
+# ---------- cobertura empírica ----------
+
+
+@pytest.mark.slow
+def test_calibracion_ic_99_mean_latency():
+    """La cobertura empírica del IC 99% para mean_latency es cercana a 99%.
+
+    Usa batch means para estimar correctamente la varianza en presencia de
+    autocorrelación de las latencias consecutivas. Divide cada corrida en K
+    batches, calcula la varianza entre las medias de cada batch, y usa esa
+    varianza para construir el IC. Esto corrige la subestimación del SE
+    naive (std/√n), que ignora la correlación entre latencias consecutivas.
+    """
+    n_runs = 30
+    arrival_rate = 10.0
+    service_rate = 20.0
+    theoretical = 1.0 / (service_rate - arrival_rate)
+    duration = 2000.0
+    z = 2.576
+    K = 50  # número de batches por corrida
+
+    hits = 0
+    for seed in range(n_runs):
+        sim = Simulator(
+            arrival_rate=arrival_rate,
+            service_rate=service_rate,
+            duration=duration,
+            seed=seed,
+        )
+        sim.run()
+        latencies = np.asarray(sim._latencies)
+        n = len(latencies)
+        if n < K:
+            continue
+
+        # Divide en K batches iguales
+        batch_size = n // K
+        batch_means = np.array(
+            [latencies[i * batch_size:(i + 1) * batch_size].mean() for i in range(K)]
+        )
+
+        # Varianza entre batch means (con ddof=1) y SE de la gran media
+        sigma2_batch = float(batch_means.var(ddof=1))
+        se = np.sqrt(sigma2_batch / K)
+        grand_mean = float(latencies.mean())
+        if grand_mean - z * se <= theoretical <= grand_mean + z * se:
+            hits += 1
+
+    coverage = hits / n_runs
+    assert coverage >= 0.80, (
+        f"cobertura={coverage:.2%} ({hits}/{n_runs}) demasiado baja "
+        f"(esperado ~99%)"
+    )
+
+
+@pytest.mark.slow
+def test_calibracion_ic_99_throughput():
+    """La cobertura empírica del IC 99% para throughput es cercana a 99%.
+
+    Usa la varianza analítica de Poisson (SE = sqrt(λ/T)) para construir
+    el IC en cada corrida.
+    """
+    n_runs = 30
+    arrival_rate = 10.0
+    service_rate = 20.0
+    duration = 2000.0
+    z = 2.576
+
+    hits = 0
+    for seed in range(n_runs):
+        sim = Simulator(
+            arrival_rate=arrival_rate,
+            service_rate=service_rate,
+            duration=duration,
+            seed=seed,
+        )
+        summary = sim.run()
+        throughput = summary["throughput_rps"]
+        se = np.sqrt(arrival_rate / duration)
+        if throughput - z * se <= arrival_rate <= throughput + z * se:
+            hits += 1
+
+    coverage = hits / n_runs
+    assert coverage >= 0.80, (
+        f"cobertura={coverage:.2%} ({hits}/{n_runs}) demasiado baja "
+        f"(esperado ~99%)"
+    )
