@@ -12,13 +12,15 @@ rproxy-sim/
 ├── requirements.txt
 ├── README.md
 ├── PLAN.md
+├── docs/                documentación adicional
+│   └── flow.md          diagrama de flujo del simulador
 ├── src/proxy_sim/       paquete importable (`from proxy_sim import ...`)
 │   ├── __init__.py
 │   ├── engine.py        motor DES (heap + event loop)
 │   ├── rng.py           generador de numpy sembrado
-│   ├── components.py    Request y Backend
+│   ├── components.py    Request, Backend y Proxy
 │   ├── loadbalancers.py RoundRobin, Random
-│   └── simulator.py     orquestador M/M/k
+│   └── simulator.py     orquestador M/M/k con proxy CPU opcional
 └── tests/
     ├── test_engine.py
     ├── test_components.py
@@ -35,6 +37,10 @@ make notebook   # abre Jupyter (selecciona el kernel "proxy-sim")
 ```
 
 Requisitos: Python 3.11+, GNU make.
+
+## Flujo del simulador
+
+Ver [docs/flow.md](docs/flow.md) para el diagrama de las 5 etapas que recorre un request (wait_proxy → service_proxy_request → wait_backend → service_backend → service_proxy_response) y los puntos de reject/timeout.
 
 ## Uso rápido
 

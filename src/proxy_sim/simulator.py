@@ -35,6 +35,7 @@ class Simulator:
         proxy_cpu_cost_response: float = 0.0,
         proxy_cpu_capacity: float = 1.0,
         proxy_max_queue_size: int | None = None,
+        proxy_timeout: float | None = None,
     ) -> None:
         if num_backends < 1:
             raise ValueError("num_backends debe ser >= 1")
@@ -50,6 +51,8 @@ class Simulator:
             raise ValueError("proxy_cpu_cost_response debe ser >= 0")
         if proxy_cpu_capacity <= 0:
             raise ValueError("proxy_cpu_capacity debe ser > 0")
+        if proxy_timeout is not None and proxy_timeout <= 0:
+            raise ValueError("proxy_timeout debe ser > 0 o None")
 
         self._arrival_rate = arrival_rate
         self._duration = duration
@@ -79,6 +82,8 @@ class Simulator:
         self._service_backend: list[float] = []
         self._service_proxy_response: list[float] = []
         self._rejected = 0
+        self._proxy_timeouts = 0
+        self._proxy_timeout = proxy_timeout
 
     def run(self) -> dict:
         """Corre la simulación hasta agotar el tiempo y devuelve el resumen."""
@@ -102,6 +107,7 @@ class Simulator:
                 "num_backends": len(self._backends),
                 "duration": elapsed,
                 "completed": 0,
+                "proxy_timed_out": self._proxy_timeouts,
                 "rejected": self._rejected,
                 "throughput_rps": 0.0,
                 "mean_latency": 0.0,
@@ -122,8 +128,9 @@ class Simulator:
             "num_backends": len(self._backends),
             "duration": elapsed,
             "completed": n,
+            "proxy_timed_out": self._proxy_timeouts,
             "rejected": self._rejected,
-            "throughput_rps": n / elapsed if elapsed > 0 else 0.0,
+            "throughput_rps": (n + self._proxy_timeouts) / elapsed if elapsed > 0 else 0.0,
             "mean_latency": float(arr.mean()),
             "p50_latency": float(np.percentile(arr, 50)),
             "p95_latency": float(np.percentile(arr, 95)),
@@ -304,22 +311,33 @@ class Simulator:
     def _finalize_request(self, req: Request) -> None:
         """Sella la finalización del request y registra las 5 etapas de latencia."""
         req.completion_time = self._loop.now
-        req.status = "completed"
 
         arrival = req.arrival_time
         completion = req.completion_time
 
+        # 5 timestamps con fallback encadenado (cada uno cae al anterior)
         proxy_start = self._resolve_timestamp(req.proxy_start_time, arrival)
         dispatch = self._resolve_timestamp(req.dispatch_time, proxy_start)
         backend_start = self._resolve_timestamp(req.service_start_time, dispatch)
         backend_done = self._resolve_timestamp(req.backend_done_time, completion)
         response_start = self._resolve_timestamp(req.response_start_time, completion)
 
-        self._wait_proxy.append(
-            self._elapsed(arrival, proxy_start) + self._elapsed(backend_done, response_start)
-        )
-        self._service_proxy_request.append(self._elapsed(proxy_start, dispatch))
+        # 3 componentes del proxy y su suma
+        wait_proxy = self._elapsed(arrival, proxy_start) + self._elapsed(backend_done, response_start)
+        service_proxy_request = self._elapsed(proxy_start, dispatch)
+        service_proxy_response = self._elapsed(response_start, completion)
+        proxy_time = wait_proxy + service_proxy_request + service_proxy_response
+
+        # ¿el proxy se tardó más del timeout?
+        if self._proxy_timeout is not None and proxy_time > self._proxy_timeout:
+            req.status = "timeout"
+            self._proxy_timeouts += 1
+            return
+
+        req.status = "completed"
+        self._wait_proxy.append(wait_proxy)
+        self._service_proxy_request.append(service_proxy_request)
         self._wait_backend.append(self._elapsed(dispatch, backend_start))
         self._service_backend.append(self._elapsed(backend_start, backend_done))
-        self._service_proxy_response.append(self._elapsed(response_start, completion))
+        self._service_proxy_response.append(service_proxy_response)
         self._latencies.append(completion - arrival)
