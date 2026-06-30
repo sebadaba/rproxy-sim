@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
-if TYPE_CHECKING:
-    from proxy_sim.engine import Event
+import numpy as np
 
 
 @dataclass
@@ -45,7 +44,6 @@ class Backend:
         self.max_queue_size = max_queue_size
         self.queue: deque[Request] = deque()
         self.in_service: Request | None = None
-        self.service_complete_event: Event | None = None
 
     def busy(self) -> bool:
         """True si está atendiendo un request ahora."""
@@ -62,6 +60,10 @@ class Backend:
     def is_full(self) -> bool:
         """True si la cola alcanzó el tope configurado (si hay tope)."""
         return self.max_queue_size is not None and len(self.queue) >= self.max_queue_size
+
+    def sample_service_time(self, rng: np.random.Generator) -> float:
+        """Devuelve una muestra de tiempo de servicio ~ Exp(1/μ)."""
+        return rng.exponential(1.0 / self.mu)
 
 
 class Proxy:
@@ -97,7 +99,6 @@ class Proxy:
         self.max_queue_size = max_queue_size
         self.queue: deque[Request] = deque()
         self.in_service: Request | None = None
-        self.service_complete_event: Event | None = None
         self.busy_time: float = 0.0  # acumulado de tiempo con CPU ocupada
 
     def busy(self) -> bool:

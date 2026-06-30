@@ -202,7 +202,7 @@ class Simulator:
             duration = self._proxy.response_service_time()
             phase = "response"
 
-        self._proxy.service_complete_event = self._loop.schedule(
+        self._loop.schedule(
             self._loop.now + duration,
             payload=partial(self._on_proxy_work_complete, self._proxy, phase),
             priority=0,
@@ -219,7 +219,6 @@ class Simulator:
             proxy.busy_time += self._loop.now - req.response_start_time
 
         proxy.in_service = None
-        proxy.service_complete_event = None
 
         if phase == "request":
             self._dispatch_request_to_backend(req)
@@ -241,34 +240,32 @@ class Simulator:
         """
         backend = self._select_backend(req)
         if not backend.busy():
-            self._start_service(backend, req)
+            self._start_backend_service(backend, req)
             return
         if not backend.is_full():
             backend.queue.append(req)
             return
         self._reject(req)
 
-    def _start_service(self, backend: Backend, req: Request) -> None:
+    def _start_backend_service(self, backend: Backend, req: Request) -> None:
         backend.in_service = req
         req.service_start_time = self._loop.now
-        duration = self._rng.exponential(1.0 / backend.mu)
-        backend.service_complete_event = self._loop.schedule(
-            self._loop.now + duration,
-            payload=partial(self._on_service_complete, backend),
+        self._loop.schedule(
+            self._loop.now + backend.sample_service_time(self._rng),
+            payload=partial(self._on_backend_service_complete, backend),
             priority=0,
         )
 
-    def _on_service_complete(self, backend: Backend) -> None:
+    def _on_backend_service_complete(self, backend: Backend) -> None:
         req = backend.in_service
-        assert req is not None, "SERVICE_COMPLETE sin in_service"
+        assert req is not None, "backend service complete sin in_service"
 
         req.backend_done_time = self._loop.now
 
         backend.in_service = None
-        backend.service_complete_event = None
 
         if backend.queue:
-            self._start_service(backend, backend.queue.popleft())
+            self._start_backend_service(backend, backend.queue.popleft())
 
         # ¿Falta CPU de response en el proxy?
         if self._proxy is not None and self._proxy.cpu_cost_response > 0:

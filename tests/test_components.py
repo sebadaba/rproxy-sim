@@ -29,7 +29,6 @@ def test_backend_nuevo_esta_libre_y_vacio():
     assert b.qlen() == 0
     assert b.load() == 0
     assert b.in_service is None
-    assert b.service_complete_event is None
 
 
 def test_backend_load_suma_en_servicio_mas_cola():
