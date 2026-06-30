@@ -150,6 +150,19 @@ class Simulator:
         req.backend_id = backend.id
         return backend
 
+    def _resolve_timestamp(self, value: float | None, fallback: float) -> float:
+        """Devuelve value si está seteado, sino fallback.
+
+        Usado cuando un timestamp puede no existir (ej: no hubo request-CPU
+        en el proxy). El fallback suele ser el timestamp anterior en la cadena.
+        """
+        return value if value is not None else fallback
+
+    def _elapsed(self, start: float, end: float) -> float:
+        """Diferencia end - start, clampeada a 0 para evitar negativos por
+        redondeo cuando dos eventos ocurren en el mismo timestamp."""
+        return max(0.0, end - start)
+
     # ---------- arrival path ----------
 
     def _on_arrival(self) -> None:
@@ -187,8 +200,6 @@ class Simulator:
 
         Si el request aún no hizo CPU request (proxy_start_time es None),
         inicia la fase request. Si ya hizo request CPU, inicia la fase response.
-        El phase se deduce del estado del request para mantener una única
-        convención en todo el simulador.
         """
         assert self._proxy is not None
         self._proxy.in_service = req
@@ -291,24 +302,24 @@ class Simulator:
     # ---------- response path ----------
 
     def _finalize_request(self, req: Request) -> None:
+        """Sella la finalización del request y registra las 5 etapas de latencia."""
         req.completion_time = self._loop.now
         req.status = "completed"
 
         arrival = req.arrival_time
         completion = req.completion_time
-        proxy_start = req.proxy_start_time if req.proxy_start_time is not None else arrival
-        dispatch = req.dispatch_time if req.dispatch_time is not None else proxy_start
-        backend_start = req.service_start_time if req.service_start_time is not None else dispatch
-        backend_done = req.backend_done_time if req.backend_done_time is not None else completion
-        response_start = req.response_start_time if req.response_start_time is not None else completion
 
-        # wait_proxy acumula espera tanto del lado request como del lado response
-        wait_proxy_req = max(0.0, proxy_start - arrival)
-        wait_proxy_resp = max(0.0, response_start - backend_done)
-        self._wait_proxy.append(wait_proxy_req + wait_proxy_resp)
+        proxy_start = self._resolve_timestamp(req.proxy_start_time, arrival)
+        dispatch = self._resolve_timestamp(req.dispatch_time, proxy_start)
+        backend_start = self._resolve_timestamp(req.service_start_time, dispatch)
+        backend_done = self._resolve_timestamp(req.backend_done_time, completion)
+        response_start = self._resolve_timestamp(req.response_start_time, completion)
 
-        self._service_proxy_request.append(max(0.0, dispatch - proxy_start))
-        self._wait_backend.append(max(0.0, backend_start - dispatch))
-        self._service_backend.append(max(0.0, backend_done - backend_start))
-        self._service_proxy_response.append(max(0.0, completion - response_start))
+        self._wait_proxy.append(
+            self._elapsed(arrival, proxy_start) + self._elapsed(backend_done, response_start)
+        )
+        self._service_proxy_request.append(self._elapsed(proxy_start, dispatch))
+        self._wait_backend.append(self._elapsed(dispatch, backend_start))
+        self._service_backend.append(self._elapsed(backend_start, backend_done))
+        self._service_proxy_response.append(self._elapsed(response_start, completion))
         self._latencies.append(completion - arrival)
